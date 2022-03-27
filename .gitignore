@@ -147,3 +147,5 @@ static
 *.iml
 data-secret
 .DS_Store
+server.stderr
+server.stdout
