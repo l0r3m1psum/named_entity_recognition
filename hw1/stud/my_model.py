@@ -12,8 +12,7 @@ import io # Diciamo che non mi serve davvero importarlo.
 # import unicodedata, string
 import multiprocessing
 
-# TODO: remove gensim and numpy dependency.
-import gensim, torch, numpy
+import torch
 
 # https://github.com/SapienzaNLP/nlp2022-hw1
 
@@ -96,15 +95,15 @@ class NERDataset(torch.utils.data.Dataset):
 class NERModule(torch.nn.Module):
 	def __init__(
 			self,
-			word_embeddings,
-			dropout_rate,
-			lstm_hidden_dim,
-			lstm_layers_num,
-			num_entities):
+			word_embeddings: torch.Tensor,
+			dropout_rate: float,
+			lstm_hidden_dim: int,
+			lstm_layers_num: int,
+			num_entities: int):
 		super().__init__()
 		embedding_dim = word_embeddings.shape[1]
 		self.embedding = (torch.nn.Embedding
-			.from_pretrained(torch.Tensor(word_embeddings), freeze=True))
+			.from_pretrained(word_embeddings, freeze=True))
 		assert self.embedding.num_embeddings == word_embeddings.shape[0]
 		assert self.embedding.embedding_dim == embedding_dim
 		self.dropout = torch.nn.Dropout(dropout_rate)
@@ -125,6 +124,32 @@ class NERModule(torch.nn.Module):
 		output = self.classifier(o)
 		return output
 
+def export_from_gensim() -> None:
+	'''This functions exports a Gensim's pre-trained word2vec plus its
+	vocabulary, adding to them them special tokens.'''
+	import gensim, numpy
+	import os
+	if False:
+		# If the file does not exists.
+		os.environ['GENSIM_DATA_DIR'] = 'model/'
+		gensim.downloader.load('word2vec-google-news-300')
+	kv = gensim.models.KeyedVectors.load_word2vec_format(VEC_FNAME, binary=True)
+	# 	#limit=10000)#limit=None)
+	# NOTE: using 0 and 1 vectors is probably a bad idea... Should I use rendomvectors instead?
+	kv.add_vectors([OOV_TOKEN, PAD_TOKEN],
+		[numpy.zeros(kv.vector_size), numpy.ones(kv.vector_size)])
+	assert all(kv.vectors[kv.key_to_index['king']] == kv['king'])
+
+	word_embeddings = torch.Tensor(kv.vectors)
+	index2word: list[str] = kv.index_to_key
+	word2index: dict[str, int] = kv.key_to_index
+
+	torch.save(word_embeddings, path1)
+	with open(path2, 'w') as f:
+		for word in index2word:
+			f.write(word)
+			f.write('\n')
+
 SEED:            int   = 42
 OOV_TOKEN:       str   = '<UNK>'
 PAD_TOKEN:       str   = '<PAD>'
@@ -138,32 +163,33 @@ BATCH_SIZE:      int   = 100
 TRAIN_FNAME:     str   = 'data/train.tsv'
 DEV_FNAME:       str   = 'data/dev.tsv'
 VEC_FNAME:       str   = 'model/word2vec-google-news-300.gz'
+MODEL_FNAME:     str   = 'model/model.pt'
+EMBED_FNAME:     str   = 'model/embeggings.pt'
+VOCAB_FNAME:     str   = 'model/vocabulary.txt'
 
 def main() -> int:
 	torch.set_num_threads(multiprocessing.cpu_count())
 	# Seeding stuff
 	# os.environ['PYTHONHASHSEED'] = SEED
 	# random.seed(SEED)
-	numpy.random.seed(SEED)
+	# numpy.random.seed(SEED)
 	torch.manual_seed(SEED)
 	torch.backends.cudnn.benchmark = False
 	torch.backends.cudnn.deterministic = True
 	torch.use_deterministic_algorithms(True)
 
-	# If this starts to get too slow create RAMfs: https://superuser.com/questions/456803/
-	kv = gensim.models.KeyedVectors.load_word2vec_format(VEC_FNAME, binary=True)
-		#limit=10000)#limit=None)
-	# NOTE: using 0 and 1 vectors is probably a bad idea... Should I use rendomvectors instead?
-	kv.add_vectors([OOV_TOKEN, PAD_TOKEN],
-		[numpy.zeros(kv.vector_size), numpy.ones(kv.vector_size)])
-	assert all(kv.vectors[kv.key_to_index['king']] == kv['king'])
-
-	# Vocabularies and word embreddings
-	embeddings_dimension: int = kv.vector_size
+	# Vocabulary and word embreddings
+	word_embeddings: torch.Tensor = torch.load(EMBED_FNAME)
+	embeddings_dimension: int = word_embeddings.shape[1]
 	print(f'{embeddings_dimension=}')
-	word_embeddings: numpy.ndarray = kv.vectors
-	index2word: list[str] = kv.index_to_key
-	word2index: dict[str, int] = kv.key_to_index
+	index2word: list[str] = []
+	word2index: dict[str, int] = {}
+	with open(VOCAB_FNAME) as f:
+		for index, word in enumerate(f):
+			word = word.rstrip()
+			index2word.append(word)
+			word2index[word] = index
+	assert OOV_TOKEN in word2index
 	index2entity: list[str] = [
 		'O',
 		'B-PER', 'B-LOC', 'B-GRP', 'B-CORP', 'B-PROD', 'B-CW',
@@ -254,11 +280,7 @@ def main() -> int:
 
 	avg_epoch_loss = train_loss / EPOCHS
 
-	torch.save(model.state_dict(), 'model/model.pt')
-
-	# model = TheModelClass(*args, **kwargs)
-	# model.load_state_dict(torch.load(PATH))
-	# model.eval()
+	torch.save(model.state_dict(), MODEL_FNAME)
 
 	return 0
 
