@@ -40,12 +40,14 @@ class RandomBaseline(Model):
             for x in tokens
         ]
 
+DELETEME = ''
+
 class StudentModel(Model):
 
     # STUDENT: construct here your model
     # this class should be loading your weights and vocabulary
     def __init__(self) -> None:
-        _, self.word2index = read_vocab(VOCAB_FNAME)
+        _, self.word2index = read_vocab(DELETEME+VOCAB_FNAME)
 
         self.model = NERModule(
             num_embeddings=len(self.word2index),
@@ -55,24 +57,44 @@ class StudentModel(Model):
             lstm_layers_num=LSTM_LAYERS,
             out_features=len(index2entity)
         )
-        self.model.load_state_dict(torch.load(MODEL_FNAME))
+        self.model.load_state_dict(torch.load(DELETEME+MODEL_FNAME))
         self.model.eval()
 
     def predict(self, tokens: List[List[str]]) -> List[List[str]]:
         # STUDENT: implement here your predict function
         # remember to respect the same order of tokens!
+        with torch.no_grad():
+            res: List[List[str]] = []
+            for sentence in tokens:
+                converted_sentence: List[int] = [[self.word2index.get(word, self.word2index[OOV_TOKEN]) for word in sentence]]
+                X = torch.as_tensor(converted_sentence)
+                Y = self.model(X)
+                # Here batch size is just one
+                assert Y.shape == (1, len(converted_sentence[0]), NUM_ENTITIES)
+                prediction = [index2entity[n] for n in torch.argmax(Y, dim=-1)[0]]
+                assert len(prediction) == len(converted_sentence[0])
 
-        res: List[List[str]] = []
-        for sentence in tokens:
-            converted_sentence: List[int] = [[self.word2index.get(word, self.word2index[OOV_TOKEN]) for word in sentence]]
-            X = torch.as_tensor(converted_sentence)
-            Y = self.model(X)
-            # Here batch size is just one
-            assert Y.shape == (1, len(converted_sentence[0]), NUM_ENTITIES)
-            y = Y[0].long().abs().t()[0]
-            guess = [index2entity[n] for n in y]
-            assert len(guess) == len(converted_sentence[0])
-            res.append(guess)
+                # The first term cannot be 'I-XXX' and can be safely transformed
+                # in 'O'.
+                if prediction[0][0] == 'I':
+                    prediction[0] = 'O'
+                assert len(prediction) >= 2
+                # Two consecutive entities cannot be 'I-XXX' and 'I-YYY' because
+                # they must be "inside" the same entity, the second one can
+                # safely be transformed in 'O', the rule below will remove all
+                # additional 'I-YYY' after our current 'O'.
+                for i in range(len(prediction)-1):
+                    if (prediction[i][0] == 'I'
+                        and prediction[i+1][0] == 'I'
+                        and prediction[i] != prediction[i+1]):
+                        prediction[i+1] = 'O'
+                # If the entity to the left is 'O' then the current entity can't
+                # be 'I-XXX' so it ca be safely changed in 'O' itself or
+                # 'B-XXX'.
+                for i in range(1, len(prediction)):
+                    if prediction[i][0] == 'I' and prediction[i-1] == 'O':
+                        prediction[i] = 'O'
+                res.append(prediction)
 
         return res
 
@@ -84,9 +106,10 @@ def main() -> int:
         ['hello', 'my', 'name', 'is', 'diego', '.'],
         ['hello', 'my', 'name', 'is', 'diego', 'bellani', '.'],
     ]
-    res = my_model.predict()
+    res = my_model.predict(inp)
     for i, r in zip(inp, res):
         print(i)
+        print(r)
     print('main should not run')
     return 0
 
