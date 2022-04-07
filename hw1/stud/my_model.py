@@ -133,15 +133,16 @@ class NERModule(torch.nn.Module):
 			input_size=embedding_dim,
 			hidden_size=lstm_hidden_dim,
 			num_layers=lstm_layers_num,
-			batch_first=True
+			batch_first=True,
+			bidirectional=True
 			# , dropout=dropout_rate
 		)
-		lstm_output_dim = lstm_hidden_dim
+		lstm_output_dim = 2*lstm_hidden_dim
 		self.classifier = torch.nn.Linear(lstm_output_dim, out_features)
 
 	def forward(self, x: torch.LongTensor) -> torch.Tensor:
 		assert x.shape[0] <= BATCH_SIZE # the second element should be the sequence length
-		seq_len = x.shape[1]
+		if __debug__: seq_len = x.shape[1]
 		assert x.dim() == 2
 		embeddings = self.embedding(x)         # (*) -> (*,H)
 		assert embeddings.shape[0] <= BATCH_SIZE \
@@ -261,7 +262,7 @@ def main() -> int:
 			X, Y = batch
 			assert X.dim() == 2
 			assert X.shape[0] <= BATCH_SIZE
-			seq_len = X.shape[1]
+			if __debug__: seq_len = X.shape[1]
 			assert X.shape == Y.shape
 			optimizer.zero_grad()
 
@@ -323,6 +324,7 @@ if __name__ == '__main__':
 
 def create_lexicon():
 	import re
+	import unicodedata
 	# s/’/'/
 	# '\.\.+$'
 	# "'s$"
@@ -342,11 +344,53 @@ def create_lexicon():
 		# This matches all numbers that ends with a dot.
 		'^[0-9½¾]+\.$',
 		# This matches dates like 2k20
-		'^[0-9½¾]k[0-9½¾]{2}$'
+		'^[0-9½¾]k[0-9½¾]{2}$',
 	]
 	# All lines that matches this regex shall be substituted with the '<NUM>'
 	# token.
-	final_re = '|'.join(regs)
+	number_re = re.compile('|'.join(regs))
+	catcode2catname = {
+		'Cc': 'Other, Control',
+		'Cf': 'Other, Format',
+		'Cn': 'Other, Not Assigned (no characters in the file have this property)',
+		'Co': 'Other, Private Use',
+		'Cs': 'Other, Surrogate',
+		'LC': 'Letter, Cased',
+		'Ll': 'Letter, Lowercase',
+		'Lm': 'Letter, Modifier',
+		'Lo': 'Letter, Other',
+		'Lt': 'Letter, Titlecase',
+		'Lu': 'Letter, Uppercase',
+		'Mc': 'Mark, Spacing Combining',
+		'Me': 'Mark, Enclosing',
+		'Mn': 'Mark, Nonspacing',
+		'Nd': 'Number, Decimal Digit',
+		'Nl': 'Number, Letter',
+		'No': 'Number, Other',
+		'Pc': 'Punctuation, Connector',
+		'Pd': 'Punctuation, Dash',
+		'Pe': 'Punctuation, Close',
+		'Pf': 'Punctuation, Final quote (may behave like Ps or Pe depending on usage)',
+		'Pi': 'Punctuation, Initial quote (may behave like Ps or Pe depending on usage)',
+		'Po': 'Punctuation, Other',
+		'Ps': 'Punctuation, Open',
+		'Sc': 'Symbol, Currency',
+		'Sk': 'Symbol, Modifier',
+		'Sm': 'Symbol, Math',
+		'So': 'Symbol, Other',
+		'Zl': 'Separator, Line',
+		'Zp': 'Separator, Paragraph',
+		'Zs': 'Separator, Space',
+	}
+	categories = set()
+	with open(TRAIN_FNAME) as f:
+		for line in f:
+			if line == '\n' or line[0] == '#':
+				continue
+			word, _ = line.split('\t')
+			categories.update(map(unicodedata.category, word))
+	for cat in categories:
+		print(cat, catcode2catname[cat])
 
 def recognized_sentence_to_tensors_pairs(
 	sentence: recognized_sentence_t,
@@ -388,7 +432,6 @@ def unicode_normalization(s: str) -> str:
 		and c in string.ascii_letters + ".,;'")
 	return res
 
-
 # The Google News pre-trained embeddings use '#' characters instead of numbers,
 # to save space. So numbers in the input must be changed in '#'. It also
 # contains the '</s>' token that may be used to my advantage. '_' is used
@@ -413,6 +456,8 @@ def export_from_gensim() -> None:
 	word_embeddings = torch.Tensor(kv.vectors)
 	index2word: index_token_converter_t = kv.index_to_key
 	word2index: token_index_converter_t = kv.key_to_index
+
+	# torch.nn.Embedding.from_pretrained(word_embeddings, frozen=True)
 
 	torch.save(word_embeddings, path1)
 	with open(path2, 'w') as f:
