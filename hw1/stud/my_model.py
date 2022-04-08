@@ -6,15 +6,15 @@ $ caffeinate -d python3 -O -m hw1.stud.my_model
 -OO cannot be used because it breaks pytorch, I'm speachless...
 
 The pre-trained word2vec model can be downloaded from this page:
-https://code.google.com/archive/p/word2vec/'''
+https://code.google.com/archive/p/word2vec/
 
-import multiprocessing
-import functools
+Info about this homework can be found here:
+https://github.com/SapienzaNLP/nlp2022-hw1'''
+
+import multiprocessing, functools, re, unicodedata
 from typing import List, Tuple, Dict
 
 import torch
-
-# https://github.com/SapienzaNLP/nlp2022-hw1
 
 # TYPES ########################################################################
 
@@ -48,6 +48,8 @@ def prepare_batch(
 	batch: List[recognized_sentence_t]
 	) -> Tuple[torch.LongTensor, torch.LongTensor]:
 
+	# TODO: transforming sentences in numbers can be done in the Dataset.
+
 	sentences: List[List[str]] = [[tup[0] for tup in recog_sent] for recog_sent in batch]
 	sentences_labels: List[List[str]] = [[tup[1] for tup in recog_sent] for recog_sent in batch]
 	assert len(sentences) == len(sentences_labels)
@@ -74,6 +76,45 @@ def prepare_batch(
 	assert X.shape == Y.shape
 	assert X.shape == (len(batch), max(map(len, sentences)))
 	return X, Y
+
+def clean_word(word: str):
+	# regs = [
+	# 	# This matches all numbers composed of just digits that can be optionally
+	# 	# followed by some letters, like in the case of units of measure e.g. 10mm.
+	# 	'^[0-9½¾]+[a-z]*$',
+	# 	# This matches all numbes that have a dot or a coma in the middle optionally
+	# 	# followed by some letters, again in the case that it is a unit of measure.
+	# 	'^[0-9½¾]*[\.,][0-9½¾]+[a-z]*$',
+	# 	# This matches all numbers alternated by dots or dashes in the middle, stuff
+	# 	# like version numbers 1.2.3 and dates 1-2-3 they can optionally be followeb
+	# 	# by letters.
+	# 	'^([0-9½¾]+[\.,-/x–])+[0-9½¾]+[a-z]*$',
+	# 	# This matches all numbers that ends with a dot.
+	# 	'^[0-9½¾]+\.$',
+	# 	# This matches dates like 2k20
+	# 	'^[0-9½¾]k[0-9½¾]{2}$',
+	# ]
+	# # All lines that matches this regex shall be substituted with the '<NUM>'
+	# # token.
+	# number_re = re.compile('|'.join(regs))
+
+	# if len(word) == 1:
+	# 	cat = unicodedata.category(word)
+	# 	if cat[0] == 'P':
+	# 		word = '<PUN>'
+	# 	elif cat[0] == 'S':
+	# 		word = '<SYM>'
+	# word = re.sub('[’’]', "'", word)
+	# word = re.sub('[“”]', '"', word)
+	# word = re.sub("""^[-_.(¿"']|[-_:,;?!)'"]$|\.\.+$|\'s$""", '', word)
+	# # UGLY UGLY hack to clean words like "xxx),", that end with two
+	# # consecutive bad characters.
+	# word = re.sub("""^[-_.(¿"']|[-_:,;?!)'"]$|\.\.+$|\'s$""", '', word)
+	# word = number_re.sub('<NUM>', word)
+	# if len(word) > 1:
+	# 	word = re.sub('[,:;]$', '', word)
+	assert word != ''
+	return word
 
 # CLASSES ######################################################################
 
@@ -161,7 +202,7 @@ class NERModule(torch.nn.Module):
 		assert output.shape == (o.shape[0], seq_len, NUM_ENTITIES)
 		return output
 
-# MAIN #########################################################################
+# CONSTANTS ####################################################################
 
 SEED:            int   = 42
 OOV_TOKEN:       str   = '<UNK>'
@@ -176,7 +217,7 @@ EMBED_DIM:       int   = 300 # like google news
 TRAIN_FNAME:     str   = 'data/train.tsv'
 DEV_FNAME:       str   = 'data/dev.tsv'
 MODEL_FNAME:     str   = 'model/model.pt'
-VOCAB_FNAME:     str   = 'model/lexicon.txt'
+VOCAB_FNAME:     str   = 'model/lexicon2.txt'
 DATALOADER_WORKERS: int = 0
 
 index2entity: index_token_converter_t = [
@@ -191,6 +232,42 @@ entity2index: token_index_converter_t = {
 
 NUM_ENTITIES:    int   = len(index2entity)
 
+catcode2catname = {
+	'Cc': 'Other, Control',
+	'Cf': 'Other, Format',
+	'Cn': 'Other, Not Assigned (no characters in the file have this property)',
+	'Co': 'Other, Private Use',
+	'Cs': 'Other, Surrogate',
+	'LC': 'Letter, Cased',
+	'Ll': 'Letter, Lowercase',
+	'Lm': 'Letter, Modifier',
+	'Lo': 'Letter, Other',
+	'Lt': 'Letter, Titlecase',
+	'Lu': 'Letter, Uppercase',
+	'Mc': 'Mark, Spacing Combining',
+	'Me': 'Mark, Enclosing',
+	'Mn': 'Mark, Nonspacing',
+	'Nd': 'Number, Decimal Digit',
+	'Nl': 'Number, Letter',
+	'No': 'Number, Other',
+	'Pc': 'Punctuation, Connector',
+	'Pd': 'Punctuation, Dash',
+	'Pe': 'Punctuation, Close',
+	'Pf': 'Punctuation, Final quote (may behave like Ps or Pe depending on usage)',
+	'Pi': 'Punctuation, Initial quote (may behave like Ps or Pe depending on usage)',
+	'Po': 'Punctuation, Other',
+	'Ps': 'Punctuation, Open',
+	'Sc': 'Symbol, Currency',
+	'Sk': 'Symbol, Modifier',
+	'Sm': 'Symbol, Math',
+	'So': 'Symbol, Other',
+	'Zl': 'Separator, Line',
+	'Zp': 'Separator, Paragraph',
+	'Zs': 'Separator, Space',
+}
+
+# MAIN #########################################################################
+
 def main() -> int:
 	torch.set_num_threads(multiprocessing.cpu_count())
 	# Seeding stuff
@@ -201,6 +278,20 @@ def main() -> int:
 	torch.backends.cudnn.benchmark = False
 	torch.backends.cudnn.deterministic = True
 	torch.use_deterministic_algorithms(True)
+
+	# Generating the lexicon from the training data
+	print('generating the lexicon')
+	words = {OOV_TOKEN, PAD_TOKEN}
+	with open(VOCAB_FNAME, 'w') as lexicon_file, open(TRAIN_FNAME) as train_data_file:
+		for line in train_data_file:
+			if line == '\n' or line[0] == '#':
+				continue
+			word, _ = line.split('\t')
+			word = clean_word(word)
+			words.add(word)
+		for word in sorted(words):
+			print(word, file=lexicon_file)
+	del words
 
 	# Vocabulary
 	index2word: index_token_converter_t
@@ -239,15 +330,6 @@ def main() -> int:
 	optimizer = torch.optim.Adam(model.parameters())
 
 	print(model)
-
-	# TODO: indagare su perché è così lento.
-	# L'unica cosa che devo fare nella collate_fn è il padding la conversione da
-	# stringhe a numeri la potrei fare nel dataset.
-	# Devo ricordarmi di disattivare le assersioni.
-	# Devo sperimentare con la batch size.
-
-	# TODO: try bidirectional=True nell'LSTM ricordandosi che cambia la
-	# dimenzione del tensore che ritorna.
 
 	log_level = 10
 	log_steps = 10
@@ -321,76 +403,6 @@ if __name__ == '__main__':
 	raise SystemExit(main())
 
 # UNUSED FUNCTINOS #############################################################
-
-def create_lexicon():
-	import re
-	import unicodedata
-	# s/’/'/
-	# '\.\.+$'
-	# "'s$"
-	# '[!?,:;)]$'
-	# '^[(¿]'
-	regs = [
-		# This matches all numbers composed of just digits that can be optionally
-		# followed by some letters, like in the case of units of measure e.g. 10mm.
-		'^[0-9½¾]+[a-z]*$',
-		# This matches all numbes that have a dot or a coma in the middle optionally
-		# followed by some letters, again in the case that it is a unit of measure.
-		'^[0-9½¾]*[\.,][0-9½¾]+[a-z]*$',
-		# This matches all numbers alternated by dots or dashes in the middle, stuff
-		# like version numbers 1.2.3 and dates 1-2-3 they can optionally be followeb
-		# by letters.
-		'^([0-9½¾]+[\.,-/x–])+[0-9½¾]+[a-z]*$',
-		# This matches all numbers that ends with a dot.
-		'^[0-9½¾]+\.$',
-		# This matches dates like 2k20
-		'^[0-9½¾]k[0-9½¾]{2}$',
-	]
-	# All lines that matches this regex shall be substituted with the '<NUM>'
-	# token.
-	number_re = re.compile('|'.join(regs))
-	catcode2catname = {
-		'Cc': 'Other, Control',
-		'Cf': 'Other, Format',
-		'Cn': 'Other, Not Assigned (no characters in the file have this property)',
-		'Co': 'Other, Private Use',
-		'Cs': 'Other, Surrogate',
-		'LC': 'Letter, Cased',
-		'Ll': 'Letter, Lowercase',
-		'Lm': 'Letter, Modifier',
-		'Lo': 'Letter, Other',
-		'Lt': 'Letter, Titlecase',
-		'Lu': 'Letter, Uppercase',
-		'Mc': 'Mark, Spacing Combining',
-		'Me': 'Mark, Enclosing',
-		'Mn': 'Mark, Nonspacing',
-		'Nd': 'Number, Decimal Digit',
-		'Nl': 'Number, Letter',
-		'No': 'Number, Other',
-		'Pc': 'Punctuation, Connector',
-		'Pd': 'Punctuation, Dash',
-		'Pe': 'Punctuation, Close',
-		'Pf': 'Punctuation, Final quote (may behave like Ps or Pe depending on usage)',
-		'Pi': 'Punctuation, Initial quote (may behave like Ps or Pe depending on usage)',
-		'Po': 'Punctuation, Other',
-		'Ps': 'Punctuation, Open',
-		'Sc': 'Symbol, Currency',
-		'Sk': 'Symbol, Modifier',
-		'Sm': 'Symbol, Math',
-		'So': 'Symbol, Other',
-		'Zl': 'Separator, Line',
-		'Zp': 'Separator, Paragraph',
-		'Zs': 'Separator, Space',
-	}
-	categories = set()
-	with open(TRAIN_FNAME) as f:
-		for line in f:
-			if line == '\n' or line[0] == '#':
-				continue
-			word, _ = line.split('\t')
-			categories.update(map(unicodedata.category, word))
-	for cat in categories:
-		print(cat, catcode2catname[cat])
 
 def recognized_sentence_to_tensors_pairs(
 	sentence: recognized_sentence_t,

@@ -10,7 +10,9 @@ def build_model(device: str) -> Model:
     # STUDENT: return StudentModel()
     # STUDENT: your model MUST be loaded on the device "device" indicates
     # return RandomBaseline()
-    return StudentModel()
+    model = StudentModel()
+    model.model.to(device)
+    return model
 
 class RandomBaseline(Model):
     options: List[Tuple[int, str]] = [
@@ -66,7 +68,7 @@ class StudentModel(Model):
         with torch.no_grad():
             res: List[List[str]] = []
             for sentence in tokens:
-                converted_sentence: List[int] = [[self.word2index.get(word, self.word2index[OOV_TOKEN]) for word in sentence]]
+                converted_sentence: List[int] = [[self.word2index.get(clean_word(word), self.word2index[OOV_TOKEN]) for word in sentence]]
                 X = torch.as_tensor(converted_sentence)
                 Y = self.model(X)
                 # Here batch size is just one
