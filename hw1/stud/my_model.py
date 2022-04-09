@@ -11,14 +11,13 @@ https://code.google.com/archive/p/word2vec/
 Info about this homework can be found here:
 https://github.com/SapienzaNLP/nlp2022-hw1'''
 
-import multiprocessing, functools, re, unicodedata, os
+import functools, os
 from typing import List, Tuple, Dict
 
 import torch
 
 # TYPES ########################################################################
 
-recognized_sentence_t = List[Tuple[str, str]]
 index_token_converter_t = List[str]
 token_index_converter_t = Dict[str, int]
 
@@ -45,36 +44,23 @@ def read_vocab(path: str) -> Tuple[index_token_converter_t, token_index_converte
 
 def prepare_batch(
 	word2index: token_index_converter_t,
-	batch: List[recognized_sentence_t]
+	batch: List[Tuple[torch.LongTensor, torch.LongTensor]]
 	) -> Tuple[torch.LongTensor, torch.LongTensor]:
-
-	# TODO: transforming sentences in numbers can be done in the Dataset.
-
-	sentences: List[List[str]] = [[tup[0] for tup in recog_sent] for recog_sent in batch]
-	sentences_labels: List[List[str]] = [[tup[1] for tup in recog_sent] for recog_sent in batch]
-	assert len(sentences) == len(sentences_labels)
-	assert all(len(a) == len(b) for a, b in zip(sentences, sentences_labels))
-
-	x: List[List[int]] = [[word2index.get(word, word2index[OOV_TOKEN]) for word in sentence] for sentence in sentences]
-	y: List[List[int]] = [[entity2index[label] for label in labels] for labels in sentences_labels]
-
-	# At this point each list inside x and y can have different length, so we
-	# fix this issue.
 
 	# X and Y will be tensor of shape (B,T), where B is the batch size and T is
 	# the length of the longest sequence
 	X = torch.nn.utils.rnn.pad_sequence(
-		[torch.as_tensor(sample) for sample in x],
+		[tensor_pair[0] for tensor_pair in batch],
 		batch_first=True,
 		padding_value=word2index[PAD_TOKEN]
 	)
 	Y = torch.nn.utils.rnn.pad_sequence(
-		[torch.as_tensor(sample) for sample in y],
+		[tensor_pair[1] for tensor_pair in batch],
 		batch_first=True,
 		padding_value=entity2index[PAD_ENTITY]
 	)
 	assert X.shape == Y.shape
-	assert X.shape == (len(batch), max(map(len, sentences)))
+	assert X.shape == (len(batch), max(map(lambda tensor_pair: tensor_pair[0].shape[0], batch)))
 	return X, Y
 
 def clean_word(word: str):
@@ -119,41 +105,56 @@ def clean_word(word: str):
 # CLASSES ######################################################################
 
 class NERDataset(torch.utils.data.Dataset):
-	def __init__(self, input_file_name: str) -> None:
-		# Each sentence in the corpus is a list of 'word entity-name' pairs
-		corpus: List[recognized_sentence_t] = []
-		sentence: recognized_sentence_t = []
+	def __init__(
+			self,
+			input_file_name: str,
+			word2index: token_index_converter_t,
+			entity2index: token_index_converter_t
+			) -> None:
+		self.data: List[Tuple[torch.LongTensor, torch.LongTensor]] = []
+		words_nums: List[int] = []
+		entities_nums: List[int] = []
 		# input_file: io.TextIOBase
 		with open(input_file_name) as input_file:
 			for num, line in enumerate(input_file, 1):
 				if line == '\n':
 					# We are at the end of a sentence
-					if sentence == []:
+					if words_nums == [] or entities_nums == []:
 						raise Exception(f'error @ {input_file.name}:{num}')
-					corpus.append(sentence)
-					sentence = []
+					pair = (
+						torch.as_tensor(words_nums),
+						torch.as_tensor(entities_nums),
+					)
+					self.data.append(pair)
+					words_nums, entities_nums = [], []
 					continue
 				if line[0] == '#':
 					# We are at the beginning of a sentence
-					if sentence != []:
+					if words_nums != [] or entities_nums != []:
 						raise Exception(f'error @ {input_file.name}:{num}')
 					continue
 				# We are looking at a 'word entity-name' pair
 				word, entity = line.split('\t')
 				entity = entity.rstrip()
-				sentence.append((word, entity))
-			if sentence != []:
+				word_num = word2index.get(word, word2index[OOV_TOKEN])
+				entity_num = entity2index[entity]
+				words_nums.append(word_num)
+				entities_nums.append(entity_num)
+			if words_nums != [] or entities_nums != []:
+				assert words_nums != [] and entities_nums != []
 				# In case the file doesn't finish with a newline.
-				corpus.append(sentence)
-				sentence = []
-		assert sentence == []
-
-		self.data = corpus
+				pair = (
+					torch.as_tensor(words_nums),
+					torch.as_tensor(entities_nums),
+				)
+				self.data.append(pair)
+				words_nums, entities_nums = [], []
+		assert words_nums == [] and entities_nums == []
 
 	def __len__(self) -> int:
 		return len(self.data)
 
-	def __getitem__(self, index: int) -> recognized_sentence_t:
+	def __getitem__(self, index: int) -> Tuple[torch.LongTensor, torch.LongTensor]:
 		return self.data[index]
 
 class NERModule(torch.nn.Module):
@@ -217,7 +218,7 @@ EMBED_DIM:       int   = 300 # like google news
 TRAIN_FNAME:     str   = 'data/train.tsv'
 DEV_FNAME:       str   = 'data/dev.tsv'
 MODEL_FNAME:     str   = 'model/model.pt'
-VOCAB_FNAME:     str   = 'model/lexicon2.txt'
+VOCAB_FNAME:     str   = 'model/lexicon.txt'
 DATALOADER_WORKERS: int = 0
 
 index2entity: index_token_converter_t = [
@@ -269,7 +270,7 @@ catcode2catname = {
 # MAIN #########################################################################
 
 def main() -> int:
-	torch.set_num_threads(multiprocessing.cpu_count())
+	# torch.set_num_threads(multiprocessing.cpu_count())
 	# Seeding stuff
 	# os.environ['PYTHONHASHSEED'] = SEED
 	# random.seed(SEED)
@@ -301,7 +302,7 @@ def main() -> int:
 
 	# Model stuff
 	my_collate_fn = functools.partial(prepare_batch, word2index)
-	train_dataset = NERDataset(TRAIN_FNAME)
+	train_dataset = NERDataset(TRAIN_FNAME, word2index, entity2index)
 	print(f'{len(train_dataset)=}')
 	train_dataloader = torch.utils.data.DataLoader(
 		train_dataset,
@@ -310,7 +311,7 @@ def main() -> int:
 		num_workers=DATALOADER_WORKERS,
 		shuffle=True
 	)
-	validation_dataset = NERDataset(DEV_FNAME)
+	validation_dataset = NERDataset(DEV_FNAME, word2index, entity2index)
 	print(f'validation {len(validation_dataset)=}')
 	validation_dataloader = torch.utils.data.DataLoader(
 		validation_dataset,
@@ -403,7 +404,9 @@ def main() -> int:
 if __name__ == '__main__':
 	raise SystemExit(main())
 
-# UNUSED FUNCTINOS #############################################################
+# UNUSED #######################################################################
+
+recognized_sentence_t = List[Tuple[str, str]]
 
 def recognized_sentence_to_tensors_pairs(
 	sentence: recognized_sentence_t,
