@@ -11,7 +11,7 @@ https://code.google.com/archive/p/word2vec/
 Info about this homework can be found here:
 https://github.com/SapienzaNLP/nlp2022-hw1'''
 
-import multiprocessing, functools, re, unicodedata
+import multiprocessing, functools, re, unicodedata, os
 from typing import List, Tuple, Dict
 
 import torch
@@ -280,18 +280,19 @@ def main() -> int:
 	torch.use_deterministic_algorithms(True)
 
 	# Generating the lexicon from the training data
-	print('generating the lexicon')
-	words = {OOV_TOKEN, PAD_TOKEN}
-	with open(VOCAB_FNAME, 'w') as lexicon_file, open(TRAIN_FNAME) as train_data_file:
-		for line in train_data_file:
-			if line == '\n' or line[0] == '#':
-				continue
-			word, _ = line.split('\t')
-			word = clean_word(word)
-			words.add(word)
-		for word in sorted(words):
-			print(word, file=lexicon_file)
-	del words
+	if not os.path.exists(VOCAB_FNAME):
+		print('generating the lexicon')
+		words = {OOV_TOKEN, PAD_TOKEN}
+		with open(VOCAB_FNAME, 'w') as lexicon_file, open(TRAIN_FNAME) as train_data_file:
+			for line in train_data_file:
+				if line == '\n' or line[0] == '#':
+					continue
+				word, _ = line.split('\t')
+				word = clean_word(word)
+				words.add(word)
+			for word in sorted(words):
+				print(word, file=lexicon_file)
+		del words
 
 	# Vocabulary
 	index2word: index_token_converter_t
