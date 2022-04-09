@@ -270,11 +270,7 @@ catcode2catname = {
 # MAIN #########################################################################
 
 def main() -> int:
-	# torch.set_num_threads(multiprocessing.cpu_count())
 	# Seeding stuff
-	# os.environ['PYTHONHASHSEED'] = SEED
-	# random.seed(SEED)
-	# numpy.random.seed(SEED)
 	torch.manual_seed(SEED)
 	torch.backends.cudnn.benchmark = False
 	torch.backends.cudnn.deterministic = True
