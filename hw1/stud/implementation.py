@@ -100,8 +100,6 @@ class StudentModel(Model):
 
         return res
 
-
-
 def main() -> int:
     my_model = StudentModel()
     inp = [
