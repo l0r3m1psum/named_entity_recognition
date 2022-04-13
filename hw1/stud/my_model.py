@@ -1,7 +1,7 @@
 '''This module implents the trainig of the Neural Network for Named Entity
 Recognition (NER). To run use the following command:
 
-$ caffeinate -d python3 -O -m hw1.stud.my_model
+$ caffeinate -d time python3 -O -m hw1.stud.my_model
 
 -OO cannot be used because it breaks pytorch, I'm speachless...
 
