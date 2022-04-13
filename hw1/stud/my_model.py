@@ -11,7 +11,7 @@ https://code.google.com/archive/p/word2vec/
 Info about this homework can be found here:
 https://github.com/SapienzaNLP/nlp2022-hw1'''
 
-import functools, os
+import functools, os, collections, re
 from typing import List, Tuple, Dict
 
 import torch
@@ -176,11 +176,12 @@ class NERModule(torch.nn.Module):
 			hidden_size=lstm_hidden_dim,
 			num_layers=lstm_layers_num,
 			batch_first=True,
-			bidirectional=True
-			# , dropout=dropout_rate
+			bidirectional=True,
+			dropout=dropout_rate
 		)
 		lstm_output_dim = 2*lstm_hidden_dim
 		self.classifier = torch.nn.Linear(lstm_output_dim, out_features)
+		if __debug__: self.lstm_output_dim = lstm_output_dim
 
 	def forward(self, x: torch.LongTensor) -> torch.Tensor:
 		assert x.shape[0] <= BATCH_SIZE # the second element should be the sequence length
@@ -195,26 +196,25 @@ class NERModule(torch.nn.Module):
 		# H_in = input size
 		# H_out = hidden size
 		o, (h, c) = self.recurrent(embeddings) # (N,L,H_in) -> (N,L,H_out)
-		assert o.dim() == 3
-		assert o.shape[0] <= BATCH_SIZE and o.shape[1] == seq_len
+		assert o.shape[0] <= BATCH_SIZE
+		assert o.shape[1:] == (seq_len, self.lstm_output_dim)
 		o = self.dropout(o)
 		output = self.classifier(o) # (*,H_in') -> (*,H_out')
-		assert output.dim() == 3
 		assert output.shape == (o.shape[0], seq_len, NUM_ENTITIES)
 		return output
 
 # CONSTANTS ####################################################################
-
+# 300 embed_dim, 40 epochs
 SEED:            int   = 42
 OOV_TOKEN:       str   = '<UNK>'
 PAD_TOKEN:       str   = '<PAD>'
 PAD_ENTITY:      str   = 'PAD'
-EPOCHS:          int   = 17 # 100
+EPOCHS:          int   = 60
 DROPOUT_RATE:    float = 0.5
 LSTM_HIDDEN_DIM: int   = 128
-LSTM_LAYERS:     int   = 1
+LSTM_LAYERS:     int   = 3
 BATCH_SIZE:      int   = 100
-EMBED_DIM:       int   = 300 # like google news
+EMBED_DIM:       int   = 100
 TRAIN_FNAME:     str   = 'data/train.tsv'
 DEV_FNAME:       str   = 'data/dev.tsv'
 MODEL_FNAME:     str   = 'model/model.pt'
@@ -279,22 +279,29 @@ def main() -> int:
 	# Generating the lexicon from the training data
 	if not os.path.exists(VOCAB_FNAME):
 		print('generating the lexicon')
-		words = {OOV_TOKEN, PAD_TOKEN}
+		words_counter = collections.Counter()
 		with open(VOCAB_FNAME, 'w') as lexicon_file, open(TRAIN_FNAME) as train_data_file:
-			for line in train_data_file:
+			for lineno, line in enumerate(train_data_file):
 				if line == '\n' or line[0] == '#':
 					continue
 				word, _ = line.split('\t')
+				if word == OOV_TOKEN or word == PAD_TOKEN:
+					raise Exception(f'found {word} in {train_data_file.name}:{lineno}')
 				word = clean_word(word)
-				words.add(word)
-			for word in sorted(words):
-				print(word, file=lexicon_file)
-		del words
+				words_counter[word] += 1
+			print(f'Total number of words in the trainig data: {len(words_counter)}')
+			for word, num in sorted(words_counter.items()):
+				if num > 1:
+					print(word, file=lexicon_file)
+			print(OOV_TOKEN, file=lexicon_file)
+			print(PAD_TOKEN, file=lexicon_file)
+		del words_counter
 
 	# Vocabulary
 	index2word: index_token_converter_t
 	word2index: token_index_converter_t
 	index2word, word2index = read_vocab(VOCAB_FNAME)
+	print(f'Total number of words in the vocabulary: {len(index2word)}')
 
 	# Model stuff
 	my_collate_fn = functools.partial(prepare_batch, word2index)
@@ -308,7 +315,7 @@ def main() -> int:
 		shuffle=True
 	)
 	validation_dataset = NERDataset(DEV_FNAME, word2index, entity2index)
-	print(f'validation {len(validation_dataset)=}')
+	print(f'{len(validation_dataset)=}')
 	validation_dataloader = torch.utils.data.DataLoader(
 		validation_dataset,
 		collate_fn=my_collate_fn,
@@ -332,61 +339,69 @@ def main() -> int:
 	log_level = 10
 	log_steps = 10
 	train_loss: float = 0.0
-	for epoch in range(EPOCHS):
-		if log_level > 0:
-			print(f' Epoch {epoch + 1:03d}')
-		epoch_loss: float = 0.0
 
-		model.train()
-		for step, batch in enumerate(train_dataloader):
-			X, Y = batch
-			assert X.dim() == 2
-			assert X.shape[0] <= BATCH_SIZE
-			if __debug__: seq_len = X.shape[1]
-			assert X.shape == Y.shape
-			optimizer.zero_grad()
+	with open('loss.dat', 'w') as loss_log_file:
+		print('# train development', file=loss_log_file)
+		for epoch in range(EPOCHS):
+			if log_level > 0:
+				print(f' Epoch {epoch + 1:03d}')
+			epoch_loss: float = 0.0
 
-			predictions = model(X)
-			assert predictions.dim() == 3
-			assert predictions.shape[0] <= BATCH_SIZE
-			assert predictions.shape[1:] == (seq_len, NUM_ENTITIES)
-			predictions = predictions.view(-1, predictions.shape[-1])
-			Y = Y.view(-1)
-			# COME FUNZIONA LOSS IN QUESTO CASO???
-			# https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
-			# TODO: put shape assertions here.
-			loss = criterion(predictions, Y)
-			loss.backward()
-			optimizer.step()
-
-			epoch_loss += loss.tolist()
-
-			if log_level > 1 and step % log_steps == log_steps - 1:
-				print(f'\t[E: {epoch:2d} @ step {step:3d}] current avg loss = '
-					f'{epoch_loss / (step + 1):0.4f}')
-
-		avg_epoch_loss = epoch_loss / len(train_dataloader)
-		train_loss += avg_epoch_loss
-		if log_level > 0:
-			print(f'\t[E: {epoch:2d}] train loss = {avg_epoch_loss:0.4f}')
-
-		valid_loss = 0.0
-		model.eval()
-		with torch.no_grad():
-			for batch in validation_dataloader:
+			model.train()
+			for step, batch in enumerate(train_dataloader):
 				X, Y = batch
+				assert X.dim() == 2
+				assert X.shape[0] <= BATCH_SIZE
+				if __debug__: seq_len = X.shape[1]
 				assert X.shape == Y.shape
+				optimizer.zero_grad()
 
 				predictions = model(X)
+				assert predictions.shape[0] <= BATCH_SIZE
+				assert predictions.shape[1:] == (seq_len, NUM_ENTITIES)
 				predictions = predictions.view(-1, predictions.shape[-1])
 				Y = Y.view(-1)
-				sample_loss = criterion(predictions, Y)
-				valid_loss += sample_loss.tolist()
+				# COME FUNZIONA LOSS IN QUESTO CASO???
+				# https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
+				# TODO: put shape assertions here.
+				loss = criterion(predictions, Y)
+				loss.backward()
+				optimizer.step()
 
-		valid_loss /= len(validation_dataloader)
+				epoch_loss += loss.tolist()
 
-		if log_level > 0:
-			print(f'  [E: {epoch:2d}] valid loss = {valid_loss:0.4f}')
+				if log_level > 1 and step % log_steps == log_steps - 1:
+					print(f'\t[E: {epoch:2d} @ step {step:3d}] current avg loss = '
+						f'{epoch_loss / (step + 1):0.4f}')
+
+			avg_epoch_loss = epoch_loss / len(train_dataloader)
+			train_loss += avg_epoch_loss
+
+			if log_level > 0:
+				print(f'\t[E: {epoch:2d}] train loss = {avg_epoch_loss:0.4f}')
+
+			valid_loss = 0.0
+			model.eval()
+			with torch.no_grad():
+				for X, Y in validation_dataloader:
+					assert X.shape == Y.shape
+					assert X.dim() == 2
+					assert X.shape[0] <= BATCH_SIZE
+					if __debug__: seq_len = X.shape[1]
+
+					predictions = model(X)
+					assert predictions.shape[0] <= BATCH_SIZE
+					assert predictions.shape[1:] == (seq_len, NUM_ENTITIES)
+					predictions = predictions.view(-1, predictions.shape[-1])
+					Y = Y.view(-1)
+					sample_loss = criterion(predictions, Y)
+					valid_loss += sample_loss.tolist()
+
+			valid_loss /= len(validation_dataloader)
+
+			if log_level > 0:
+				print(f'  [E: {epoch:2d}] valid loss = {valid_loss:0.4f}')
+			print(f'{avg_epoch_loss} {valid_loss}', file=loss_log_file)
 
 	if log_level > 0:
 		print('... Done!')
@@ -394,6 +409,21 @@ def main() -> int:
 	avg_epoch_loss = train_loss/EPOCHS
 
 	torch.save(model.state_dict(), MODEL_FNAME)
+
+	if False:
+		# TODO: compute confusion matrix and write to the file for later
+		# plotting.
+		n_classes = len(index2entity)-1
+		confusion_matrix: List[List[int]] = [
+			[0] * n_classes for _ in range(n_classes)
+		]
+		with torch.no_grad():
+			for X, Y in validation_dataloader:
+				Y_pred = model(X)
+				breakpoint()
+				Y_pred = torch.argmax(Y_pred, dim=-1)
+				for pred, truth in zip(Y_pred, Y):
+					pass
 
 	return 0
 
