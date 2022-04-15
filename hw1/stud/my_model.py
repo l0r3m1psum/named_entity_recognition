@@ -11,7 +11,7 @@ https://code.google.com/archive/p/word2vec/
 Info about this homework can be found here:
 https://github.com/SapienzaNLP/nlp2022-hw1'''
 
-import functools, os, collections, re
+import functools, os, collections
 from typing import List, Tuple, Dict
 
 import torch
@@ -204,7 +204,7 @@ class NERModule(torch.nn.Module):
 		return output
 
 # CONSTANTS ####################################################################
-# 300 embed_dim, 40 epochs
+
 SEED:            int   = 42
 OOV_TOKEN:       str   = '<UNK>'
 PAD_TOKEN:       str   = '<PAD>'
@@ -213,7 +213,7 @@ EPOCHS:          int   = 60
 DROPOUT_RATE:    float = 0.5
 LSTM_HIDDEN_DIM: int   = 128
 LSTM_LAYERS:     int   = 3
-BATCH_SIZE:      int   = 100
+BATCH_SIZE:      int   = 10
 EMBED_DIM:       int   = 100
 TRAIN_FNAME:     str   = 'data/train.tsv'
 DEV_FNAME:       str   = 'data/dev.tsv'
@@ -413,13 +413,17 @@ def main() -> int:
 	if False:
 		# TODO: compute confusion matrix and write to the file for later
 		# plotting.
-		n_classes = len(index2entity)-1
+		n_classes = 7
 		confusion_matrix: List[List[int]] = [
 			[0] * n_classes for _ in range(n_classes)
 		]
 		with torch.no_grad():
 			for X, Y in validation_dataloader:
 				Y_pred = model(X)
+				for prediction, truth in zip(Y_pred, Y):
+					prediction = torch.argmax(Y_pred, dim=-1)
+					# a questo punto devo iterare su
+
 				breakpoint()
 				Y_pred = torch.argmax(Y_pred, dim=-1)
 				for pred, truth in zip(Y_pred, Y):
