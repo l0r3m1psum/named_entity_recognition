@@ -295,7 +295,8 @@ def main() -> int:
 					print(word, file=lexicon_file)
 			print(OOV_TOKEN, file=lexicon_file)
 			print(PAD_TOKEN, file=lexicon_file)
-		del words_counter
+		del words_counter, lineno, line, word, num, _, lexicon_file, train_data_file
+	assert dir() == [], f'{dir()}'
 
 	# Vocabulary
 	index2word: index_token_converter_t
@@ -334,17 +335,15 @@ def main() -> int:
 	criterion = torch.nn.CrossEntropyLoss(ignore_index=entity2index[PAD_ENTITY])
 	optimizer = torch.optim.Adam(model.parameters())
 
-	print(model)
+	if not os.path.exists(MODEL_FNAME):
+		print(model)
 
-	log_level = 10
-	log_steps = 10
-	train_loss: float = 0.0
+		log_steps: int = 10
+		train_loss: float = 0.0
+		losses: List[Tuple[float, float]] = []
 
-	with open('loss.dat', 'w') as loss_log_file:
-		print('# train development', file=loss_log_file)
 		for epoch in range(EPOCHS):
-			if log_level > 0:
-				print(f' Epoch {epoch + 1:03d}')
+			print(f' Epoch {epoch + 1:03d}')
 			epoch_loss: float = 0.0
 
 			model.train()
@@ -370,15 +369,14 @@ def main() -> int:
 
 				epoch_loss += loss.tolist()
 
-				if log_level > 1 and step % log_steps == log_steps - 1:
+				if step % log_steps == log_steps - 1:
 					print(f'\t[E: {epoch:2d} @ step {step:3d}] current avg loss = '
 						f'{epoch_loss / (step + 1):0.4f}')
 
 			avg_epoch_loss = epoch_loss / len(train_dataloader)
 			train_loss += avg_epoch_loss
 
-			if log_level > 0:
-				print(f'\t[E: {epoch:2d}] train loss = {avg_epoch_loss:0.4f}')
+			print(f'\t[E: {epoch:2d}] train loss = {avg_epoch_loss:0.4f}')
 
 			valid_loss = 0.0
 			model.eval()
@@ -399,35 +397,61 @@ def main() -> int:
 
 			valid_loss /= len(validation_dataloader)
 
-			if log_level > 0:
-				print(f'  [E: {epoch:2d}] valid loss = {valid_loss:0.4f}')
-			print(f'{avg_epoch_loss} {valid_loss}', file=loss_log_file)
+			print(f'  [E: {epoch:2d}] valid loss = {valid_loss:0.4f}')
+			losses.append((avg_epoch_loss, valid_loss))
 
-	if log_level > 0:
 		print('... Done!')
 
-	avg_epoch_loss = train_loss/EPOCHS
+		avg_epoch_loss = train_loss/EPOCHS
 
-	torch.save(model.state_dict(), MODEL_FNAME)
+		torch.save(model.state_dict(), MODEL_FNAME)
 
-	if False:
-		# TODO: compute confusion matrix and write to the file for later
-		# plotting.
-		n_classes = 7
-		confusion_matrix: List[List[int]] = [
-			[0] * n_classes for _ in range(n_classes)
-		]
-		with torch.no_grad():
-			for X, Y in validation_dataloader:
-				Y_pred = model(X)
-				for prediction, truth in zip(Y_pred, Y):
-					prediction = torch.argmax(Y_pred, dim=-1)
-					# a questo punto devo iterare su
+		with open('loss.dat', 'w') as loss_log_file:
+			print('# train development', file=loss_log_file)
+			for avg_epoch_loss, valid_loss in losses:
+				print(f'{avg_epoch_loss} {valid_loss}', file=loss_log_file)
 
-				breakpoint()
-				Y_pred = torch.argmax(Y_pred, dim=-1)
-				for pred, truth in zip(Y_pred, Y):
-					pass
+		del losses, loss_log_file, batch, X, Y, avg_epoch_loss, epoch, epoch_loss, log_steps, loss, train_loss, valid_loss
+	else:
+		model.load_state_dict(torch.load(MODEL_FNAME))
+		model.eval()
+
+	print(dir())
+
+	print('Generating the confusion matrix')
+	n_classes = 7
+	confusion_matrix: List[List[int]] = [
+		[0] * n_classes for _ in range(n_classes)
+	]
+	assert not model.training
+	with torch.no_grad():
+		for X, Y in validation_dataloader:
+			for predictions, truths in zip(model(X), Y):
+				predictions = torch.argmax(predictions, dim=-1)
+				for prediction, truth in zip(predictions, truths):
+					assert prediction != entity2index[PAD_ENTITY]
+					if truth == entity2index[PAD_ENTITY]:
+						continue # FIXME: there is something really wrong here...
+					if prediction > 6:
+						assert index2entity[prediction][0] == 'I'
+						prediction -= 6
+						assert index2entity[prediction][0] == 'B'
+					if truth > 6:
+						assert index2entity[truth][0] == 'I', f'{index2entity[truth]} {truth}'
+						truth -= 6
+						assert index2entity[truth][0] == 'B'
+
+					confusion_matrix[truth][prediction] += 1
+
+	for i, row in enumerate(confusion_matrix):
+		for j, n in enumerate(row):
+			confusion_matrix[i][j] = n/sum(row)
+
+	with open('confusion.dat', 'w') as conf_file:
+		# TODO: remove B- from the names str[2:]
+		print('xxx ' + ' '.join(index2entity[i] for i in range(7)), file=conf_file)
+		for i, row in enumerate(confusion_matrix):
+			print(index2entity[i] + ' ' + ' '.join(map(str, row)), file=conf_file)
 
 	return 0
 
