@@ -440,9 +440,10 @@ def main() -> int:
 			for predictions, truths in zip(model(X), Y):
 				predictions = torch.argmax(predictions, dim=-1)
 				for prediction, truth in zip(predictions, truths):
-					assert prediction != entity2index[PAD_ENTITY]
-					if truth == entity2index[PAD_ENTITY]:
-						continue # FIXME: there is something really wrong here...
+					if (truth == entity2index[PAD_ENTITY]
+						or prediction == entity2index[PAD_ENTITY]):
+						# Of course we skip padding
+						continue
 					if prediction > 6:
 						assert index2entity[prediction][0] == 'I'
 						prediction -= 6
