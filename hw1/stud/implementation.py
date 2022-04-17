@@ -68,7 +68,10 @@ class StudentModel(Model):
         with torch.no_grad():
             res: List[List[str]] = []
             for sentence in tokens:
-                converted_sentence: List[int] = [[self.word2index.get(clean_word(word), self.word2index[OOV_TOKEN]) for word in sentence]]
+                converted_sentence: List[int] = [
+                    [self.word2index.get(clean_word(word), self.word2index[OOV_TOKEN])
+                    for word in sentence]
+                ]
                 X = torch.as_tensor(converted_sentence)
                 Y = self.model(X)
                 # Here batch size is just one
