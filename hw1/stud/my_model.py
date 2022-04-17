@@ -63,6 +63,12 @@ def prepare_batch(
 	assert X.shape == (len(batch), max(map(lambda tensor_pair: tensor_pair[0].shape[0], batch)))
 	return X, Y
 
+def pca_svd(X: torch.as_tensor, n_components: int):
+	U, S, Vt = torch.linalg.svd(X)
+	U = U[:, : n_components]
+	U *= S[: n_components]
+	return U
+
 def clean_word(word: str):
 	# regs = [
 	# 	# This matches all numbers composed of just digits that can be optionally
@@ -158,6 +164,7 @@ class NERDataset(torch.utils.data.Dataset):
 		return self.data[index]
 
 class NERModule(torch.nn.Module):
+	# Architecture taken from the POS one showed in class
 	def __init__(
 			self,
 			num_embeddings: int,
@@ -219,6 +226,9 @@ TRAIN_FNAME:     str   = 'data/train.tsv'
 DEV_FNAME:       str   = 'data/dev.tsv'
 MODEL_FNAME:     str   = 'model/model.pt'
 VOCAB_FNAME:     str   = 'model/lexicon.txt'
+LOSS_FNAME:      str   = 'loss.dat'
+CONFUSION_FNAME: str   = 'confusion.dat'
+PCA_FNAME:       str   = 'pca.dat'
 DATALOADER_WORKERS: int = 0
 
 index2entity: index_token_converter_t = [
@@ -338,6 +348,7 @@ def main() -> int:
 	if not os.path.exists(MODEL_FNAME):
 		print(model)
 
+		# Training code originally taken from the the POS notebook showed in class
 		log_steps: int = 10
 		train_loss: float = 0.0
 		losses: List[Tuple[float, float]] = []
@@ -406,7 +417,7 @@ def main() -> int:
 
 		torch.save(model.state_dict(), MODEL_FNAME)
 
-		with open('loss.dat', 'w') as loss_log_file:
+		with open(LOSS_FNAME, 'w') as loss_log_file:
 			print('# train development', file=loss_log_file)
 			for avg_epoch_loss, valid_loss in losses:
 				print(f'{avg_epoch_loss} {valid_loss}', file=loss_log_file)
@@ -447,11 +458,22 @@ def main() -> int:
 		for j, n in enumerate(row):
 			confusion_matrix[i][j] = n/sum(row)
 
-	with open('confusion.dat', 'w') as conf_file:
+	with open(CONFUSION_FNAME, 'w') as conf_file:
 		# TODO: remove B- from the names str[2:]
 		print('xxx ' + ' '.join(index2entity[i] for i in range(7)), file=conf_file)
 		for i, row in enumerate(confusion_matrix):
 			print(index2entity[i] + ' ' + ' '.join(map(str, row)), file=conf_file)
+
+	print('Generating PCA analysis')
+	with torch.no_grad():
+		words = ['horse', 'dog', 'animal', 'king', 'queen', 'france', 'spain', 'italy']
+		vectors  = model.embedding(
+			torch.as_tensor([word2index[word] for word in words])
+		)
+		with open(PCA_FNAME, 'w') as pca_file:
+			for name, (x, y) in zip(words, pca_svd(vectors, 2)):
+				x, y = x.item(), y.item()
+				print(name, x, y, file=pca_file)
 
 	return 0
 
