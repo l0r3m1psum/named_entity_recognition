@@ -417,16 +417,17 @@ def main() -> int:
 
 		torch.save(model.state_dict(), MODEL_FNAME)
 
-		with open(LOSS_FNAME, 'w') as loss_log_file:
-			print('# train development', file=loss_log_file)
+		with open(LOSS_FNAME, 'w') as loss_file:
+			print('# train development', file=loss_file)
 			for avg_epoch_loss, valid_loss in losses:
-				print(f'{avg_epoch_loss} {valid_loss}', file=loss_log_file)
+				print(f'{avg_epoch_loss} {valid_loss}', file=loss_file)
 
-		del losses, loss_log_file, batch, X, Y, avg_epoch_loss, epoch, epoch_loss, log_steps, loss, train_loss, valid_loss
+		del losses, loss_file, batch, X, Y, avg_epoch_loss, epoch, epoch_loss, log_steps, loss, train_loss, valid_loss
 	else:
 		model.load_state_dict(torch.load(MODEL_FNAME))
 		model.eval()
 
+	assert not model.training
 	print(dir())
 
 	print('Generating the confusion matrix')
@@ -434,7 +435,6 @@ def main() -> int:
 	confusion_matrix: List[List[int]] = [
 		[0] * n_classes for _ in range(n_classes)
 	]
-	assert not model.training
 	with torch.no_grad():
 		for X, Y in validation_dataloader:
 			for predictions, truths in zip(model(X), Y):
@@ -467,6 +467,9 @@ def main() -> int:
 	print('Generating PCA analysis')
 	with torch.no_grad():
 		words = ['horse', 'dog', 'animal', 'king', 'queen', 'france', 'spain', 'italy']
+		if any(word not in word2index for word in words):
+			print('unable to generate PCA')
+			return 0
 		vectors  = model.embedding(
 			torch.as_tensor([word2index[word] for word in words])
 		)
