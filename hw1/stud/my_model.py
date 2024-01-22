@@ -456,8 +456,9 @@ def main() -> int:
 					confusion_matrix[truth][prediction] += 1
 
 	for i, row in enumerate(confusion_matrix):
+		tot = sum(row)
 		for j, n in enumerate(row):
-			confusion_matrix[i][j] = n/sum(row)
+			confusion_matrix[i][j] = n/tot
 
 	with open(CONFUSION_FNAME, 'w') as conf_file:
 		# TODO: remove B- from the names str[2:]
