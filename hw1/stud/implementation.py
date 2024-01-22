@@ -42,7 +42,7 @@ class RandomBaseline(Model):
             for x in tokens
         ]
 
-DELETEME = ''
+DELETEME = '../'
 
 class StudentModel(Model):
 
